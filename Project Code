@@ -1,0 +1,116 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from pathlib import Path
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+
+st.set_page_config(page_title="Customer Churn AI", page_icon="📉", layout="wide")
+st.title("📉 Customer Churn Prediction & Retention Analytics")
+st.caption("A portfolio demo built with Python, Pandas, Scikit-learn and Streamlit.")
+
+DATA_PATH = Path(__file__).parent / "data" / "telco_churn_demo.csv"
+df = pd.read_csv(DATA_PATH)
+
+st.info("Demo dataset: this project includes synthetic sample records for demonstration, not real customer data. Replace it with a properly licensed real dataset before making business claims.")
+
+with st.expander("Explore the dataset", expanded=False):
+    st.dataframe(df.head(20), use_container_width=True)
+    st.write(f"Rows: **{len(df):,}** | Columns: **{len(df.columns)}**")
+
+target = "churn"
+drop_cols = ["customer_id", target]
+X = df.drop(columns=drop_cols)
+y = df[target].map({"No": 0, "Yes": 1})
+
+categorical_features = X.select_dtypes(include=["object"]).columns.tolist()
+numeric_features = X.select_dtypes(exclude=["object"]).columns.tolist()
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("numeric", Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]), numeric_features),
+        ("categorical", Pipeline([("imputer", SimpleImputer(strategy="most_frequent")),
+                                  ("onehot", OneHotEncoder(handle_unknown="ignore"))]), categorical_features),
+    ]
+)
+model = Pipeline([
+    ("preprocessor", preprocessor),
+    ("classifier", RandomForestClassifier(n_estimators=250, random_state=42, class_weight="balanced"))
+])
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+model.fit(X_train, y_train)
+pred = model.predict(X_test)
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Accuracy", f"{accuracy_score(y_test, pred):.1%}")
+m2.metric("Precision", f"{precision_score(y_test, pred, zero_division=0):.1%}")
+m3.metric("Recall", f"{recall_score(y_test, pred, zero_division=0):.1%}")
+m4.metric("F1-score", f"{f1_score(y_test, pred, zero_division=0):.1%}")
+
+left, right = st.columns(2)
+with left:
+    st.subheader("Churn distribution")
+    counts = df["churn"].value_counts().rename_axis("Customer status").reset_index(name="Customers")
+    st.bar_chart(counts.set_index("Customer status"))
+with right:
+    st.subheader("Confusion matrix")
+    cm = confusion_matrix(y_test, pred, labels=[0, 1])
+    st.dataframe(pd.DataFrame(cm, index=["Actual: No churn", "Actual: Churn"],
+                              columns=["Predicted: No churn", "Predicted: Churn"]), use_container_width=True)
+
+st.divider()
+st.header("🔎 Predict churn for a customer")
+st.write("Enter customer details below. The prediction is based on the included demonstration dataset.")
+with st.form("prediction_form"):
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        gender = st.selectbox("Gender", ["Female", "Male"])
+        senior = st.selectbox("Senior citizen", [0, 1], format_func=lambda x: "Yes" if x == 1 else "No")
+        partner = st.selectbox("Has partner?", ["Yes", "No"])
+        dependents = st.selectbox("Has dependents?", ["Yes", "No"])
+        tenure = st.slider("Tenure (months)", 0, 72, 12)
+    with c2:
+        phone = st.selectbox("Phone service", ["Yes", "No"])
+        internet = st.selectbox("Internet service", ["DSL", "Fiber optic", "No"])
+        contract = st.selectbox("Contract", ["Month-to-month", "One year", "Two year"])
+        paperless = st.selectbox("Paperless billing", ["Yes", "No"])
+    with c3:
+        monthly = st.slider("Monthly charges", 18.0, 120.0, 70.0, 1.0)
+        total = st.number_input("Total charges", min_value=0.0, max_value=10000.0, value=float(monthly * tenure), step=10.0)
+        payment = st.selectbox("Payment method", [
+            "Electronic check", "Mailed check", "Bank transfer (automatic)", "Credit card (automatic)"
+        ])
+    submitted = st.form_submit_button("Predict churn risk", type="primary")
+
+if submitted:
+    customer = pd.DataFrame([{
+        "gender": gender, "senior_citizen": senior, "partner": partner,
+        "dependents": dependents, "tenure_months": tenure, "phone_service": phone,
+        "internet_service": internet, "contract": contract, "paperless_billing": paperless,
+        "monthly_charges": monthly, "total_charges": total, "payment_method": payment
+    }])
+    churn_probability = model.predict_proba(customer)[0][1]
+    prediction = "Likely to churn" if churn_probability >= 0.5 else "Likely to stay"
+    risk = "High" if churn_probability >= 0.65 else "Medium" if churn_probability >= 0.35 else "Low"
+    a, b, c = st.columns(3)
+    a.metric("Prediction", prediction)
+    b.metric("Estimated churn probability", f"{churn_probability:.1%}")
+    c.metric("Risk level", risk)
+    if risk == "High":
+        st.warning("Possible next step: review service issues and consider a relevant retention offer. This is a demo suggestion, not a guaranteed intervention.")
+    elif risk == "Medium":
+        st.info("Possible next step: monitor customer satisfaction and review contract or billing concerns.")
+    else:
+        st.success("The model estimates a lower churn risk for this input.")
+    st.caption("Predictions are educational outputs from a model trained on synthetic data and should not be used for real business decisions.")
+
+st.divider()
+st.caption("Built as an educational AIML portfolio project. Model metrics can vary if you replace the dataset.")
